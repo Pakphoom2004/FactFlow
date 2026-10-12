@@ -1,0 +1,69 @@
+name: Deploy Frontend to Azure VM
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'FactFlow-project/**'   # ✅ trigger เฉพาะเวลามีการแก้โค้ดใน frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Create .env.production
+        working-directory: ./FactFlow-project
+        run: |
+          echo "VITE_BACKEND_URL=${{ secrets.VITE_BACKEND_URL }}" > .env.production
+          echo "VITE_UPLOAD_URL=${{ secrets.VITE_UPLOAD_URL }}" >> .env.production
+
+      - name: Install dependencies
+        working-directory: ./FactFlow-project
+        run: npm ci
+
+      - name: Build project
+        working-directory: ./FactFlow-project
+        run: npm run build
+
+      - name: Clear old files on server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.HOST_SERVER_FRONTEND }}
+          username: ${{ secrets.HOST_USER_NAME_FRONTEND }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY_FRONTEND }}
+          script: |
+            sudo rm -rf /var/www/html/*
+            sudo mkdir -p /var/www/html
+            sudo chown -R $USER:$USER /var/www/html
+            echo "🧹 Old files cleared"
+
+      - name: Upload dist folder to server
+        uses: appleboy/scp-action@v0.1.6
+        with:
+          host: ${{ secrets.HOST_SERVER_FRONTEND }}
+          username: ${{ secrets.HOST_USER_NAME_FRONTEND }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY_FRONTEND }}
+          source: FactFlow-project/dist/**
+          target: /var/www/html/
+          strip_components: 2
+
+      - name: Fix permissions and restart nginx
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.HOST_SERVER_FRONTEND }}
+          username: ${{ secrets.HOST_USER_NAME_FRONTEND }}
+          key: ${{ secrets.HOST_SSH_PRIVATE_KEY_FRONTEND }}
+          script: |
+            sudo chown -R www-data:www-data /var/www/html
+            sudo chmod -R 755 /var/www/html
+            sudo nginx -t && sudo systemctl restart nginx
+            echo "🚀 Frontend deployed successfully!"
